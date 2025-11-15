@@ -1,118 +1,77 @@
 import math
-from physics.table import (
-    INNER_LEFT,
-    INNER_RIGHT,
-    INNER_TOP,
-    INNER_BOTTOM,
-)
+from physics.table import TABLE_MARGIN, TABLE_WIDTH, TABLE_HEIGHT
 
+# ... (여기에 네가 이미 만든 _realistic_cushion_response, handle_cushion_collision 그대로 두기)
 
-def _realistic_cushion_response(ball, nx, ny):
-    vx, vy = ball.vx, ball.vy
-    speed = math.hypot(vx, vy)
-    if speed == 0:
+def handle_ball_collision(b1, b2):
+    """
+    두 공(b1, b2) 사이의 2D 탄성 충돌 처리.
+    - python-billiards처럼 '단단한 원(디스크)의 탄성충돌' 모델을 사용.
+    - 접선 성분은 유지, 법선 성분만 서로 교환(질량/반발계수 고려).
+    """
+
+    # 1) 거리 / 충돌 여부 판정
+    dx = b2.x - b1.x
+    dy = b2.y - b1.y
+    dist_sq = dx * dx + dy * dy
+
+    min_dist = (b1.radius + b2.radius)
+    if dist_sq == 0:
+        # 완전히 같은 위치 → 살짝 밀어내기만 하고 종료
+        sep = min_dist or 1.0
+        b2.x += sep * 0.5
+        b2.y += sep * 0.5
         return
 
-    # 속도 벡터를 법선/접선 성분으로 분해
-    vn_scalar = vx * nx + vy * ny
-    vn_x = vn_scalar * nx
-    vn_y = vn_scalar * ny
-    vt_x = vx - vn_x
-    vt_y = vy - vn_y
+    if dist_sq >= min_dist * min_dist:
+        # 아직 겹치지 않았으면 충돌 아님
+        return
 
-    # 입사각에 따른 보정
-    cos_theta = abs(vn_scalar) / (speed + 1e-8)
-
-    base_e = 0.93       # 반발계수
-    base_tangent = 0.97 # 접선 감쇠
-
-    e = base_e - 0.05 * (1.0 - cos_theta)
-    tangent_scale = base_tangent - 0.05 * cos_theta
-
-    e = max(0.7, min(0.98, e))
-    tangent_scale = max(0.85, min(0.99, tangent_scale))
-
-    vn_after_x = -e * vn_x
-    vn_after_y = -e * vn_y
-    vt_after_x = tangent_scale * vt_x
-    vt_after_y = tangent_scale * vt_y
-
-    ball.vx = vn_after_x + vt_after_x
-    ball.vy = vn_after_y + vt_after_y
-
-
-def handle_cushion_collision(ball):
-    """
-    INNER_* (플레이 영역 안쪽 경계)를 기준으로 쿠션 판정.
-    """
-    hit = False
-
-    # 왼쪽 쿠션
-    if ball.x - ball.radius < INNER_LEFT:
-        ball.x = INNER_LEFT + ball.radius
-        _realistic_cushion_response(ball, nx=1.0, ny=0.0)
-        hit = True
-
-    # 오른쪽 쿠션
-    if ball.x + ball.radius > INNER_RIGHT:
-        ball.x = INNER_RIGHT - ball.radius
-        _realistic_cushion_response(ball, nx=-1.0, ny=0.0)
-        hit = True
-
-    # 위쪽 쿠션
-    if ball.y - ball.radius < INNER_TOP:
-        ball.y = INNER_TOP + ball.radius
-        _realistic_cushion_response(ball, nx=0.0, ny=1.0)
-        hit = True
-
-    # 아래쪽 쿠션
-    if ball.y + ball.radius > INNER_BOTTOM:
-        ball.y = INNER_BOTTOM - ball.radius
-        _realistic_cushion_response(ball, nx=0.0, ny=-1.0)
-        hit = True
-
-    return hit
-
-
-def handle_ball_collision(a, b):
-    """
-    공-공 충돌 (질량 동일, 약간 비탄성).
-    """
-    dx = b.x - a.x
-    dy = b.y - a.y
-    dist = math.hypot(dx, dy)
-    min_dist = a.radius + b.radius
-
-    if dist == 0 or dist >= min_dist:
-        return False
-
+    dist = math.sqrt(dist_sq)
     nx = dx / dist
-    ny = dy / dist
+    ny = dy / dist  # 두 공 중심을 잇는 단위 법선 벡터 (b1->b2 방향)
 
-    # 겹침 해소
-    overlap = min_dist - dist
-    a.x -= nx * overlap * 0.5
-    a.y -= ny * overlap * 0.5
-    b.x += nx * overlap * 0.5
-    b.y += ny * overlap * 0.5
+    # 2) 상대 속도의 법선 성분 계산
+    dvx = b1.vx - b2.vx
+    dvy = b1.vy - b2.vy
+    rel_normal = dvx * nx + dvy * ny
 
-    rvx = b.vx - a.vx
-    rvy = b.vy - a.vy
-    vel_along_normal = rvx * nx + rvy * ny
+    # 이미 서로 멀어지는 중이면(법선 방향 상대속도가 0보다 크면) 스킵
+    if rel_normal > 0:
+        return
 
-    if vel_along_normal > 0:
-        return False
+    # 3) 질량 / 반발계수
+    m1 = getattr(b1, "mass", 1.0)
+    m2 = getattr(b2, "mass", 1.0)
 
-    restitution = 0.92
-    j = -(1 + restitution) * vel_along_normal
-    j /= 2.0
+    # python-billiards는 에너지 보존(완전 탄성, e=1)을 쓰지만
+    # 살짝 현실감 주려고 e를 0.98 정도로 둔다.
+    restitution = 0.98
+
+    # 충격량 스칼라(j) 계산 (일반적인 2D impulse 공식)
+    # j = -(1+e) * (v_rel·n) / (1/m1 + 1/m2)
+    j = -(1.0 + restitution) * rel_normal / (1.0 / m1 + 1.0 / m2)
 
     impulse_x = j * nx
     impulse_y = j * ny
 
-    a.vx -= impulse_x
-    a.vy -= impulse_y
-    b.vx += impulse_x
-    b.vy += impulse_y
+    # 4) 속도 갱신 (운동량 보존)
+    b1.vx += impulse_x / m1
+    b1.vy += impulse_y / m1
+    b2.vx -= impulse_x / m2
+    b2.vy -= impulse_y / m2
 
-    return True
+    # 5) 겹침(position) 보정
+    #    - python-billiards는 '충돌 순간으로 시간을 되감아서' 겹침을 원천 차단하지만
+    #      우리는 프레임 기반이라 약간 겹칠 수 있어서 여기서 분리.
+    overlap = min_dist - dist
+    if overlap > 0:
+        # 두 공을 질량 비율에 따라 반반씩 밀어내기
+        inv_mass_sum = (1.0 / m1 + 1.0 / m2)
+        corr1 = overlap * (1.0 / m1) / inv_mass_sum
+        corr2 = overlap * (1.0 / m2) / inv_mass_sum
+
+        b1.x -= corr1 * nx
+        b1.y -= corr1 * ny
+        b2.x += corr2 * nx
+        b2.y += corr2 * ny
