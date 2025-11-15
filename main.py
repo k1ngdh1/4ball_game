@@ -1,7 +1,12 @@
 import pygame
-import math
 from physics.ball import Ball
-from physics.table import TABLE_WIDTH, TABLE_HEIGHT, TABLE_RECT
+from physics.table import (
+    TABLE_WIDTH,
+    TABLE_HEIGHT,
+    TABLE_RECT,        # 플레이 영역 (안쪽 초록)
+    CUSHION_RECT,      # 쿠션 영역
+    CUSHION_THICKNESS, # 지금은 안 써도 되지만 일단 둬도 됨
+)
 from physics.collision import handle_cushion_collision, handle_ball_collision
 
 pygame.init()
@@ -10,6 +15,12 @@ WIDTH, HEIGHT = TABLE_WIDTH, TABLE_HEIGHT
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("3-Cushion Prototype v0.1")
 clock = pygame.time.Clock()
+
+# 색상 설정
+BACKGROUND_COLOR = (4, 40, 12)     # 바깥 배경(짙은 초록)
+CLOTH_COLOR      = (8, 100, 28)    # 테이블 천(안쪽)
+CUSHION_COLOR    = (196, 160, 112) # 연한 갈색 쿠션
+AIM_LINE_COLOR   = (255, 255, 255) # 조준선
 
 # 공 생성
 balls = [
@@ -23,7 +34,7 @@ start_pos = None
 
 running = True
 while running:
-    dt = clock.tick(60) / 1000.0  # delta time (초 단위)
+    dt = clock.tick(60) / 1000.0
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -38,36 +49,50 @@ while running:
             end_pos = pygame.mouse.get_pos()
             shooting = False
 
-            # 힘 = 드래그 거리의 0.03배
             sx, sy = start_pos
             ex, ey = end_pos
             dx, dy = (sx - ex), (sy - ey)
-            balls[0].vx = dx * 0.03
-            balls[0].vy = dy * 0.03
+            balls[0].vx = dx * 0.04
+            balls[0].vy = dy * 0.04
 
     # 공 업데이트 + 충돌 처리
     for i, b in enumerate(balls):
         b.update(dt)
         handle_cushion_collision(b)
-
-        # 공-공 충돌
         for j in range(i + 1, len(balls)):
             handle_ball_collision(b, balls[j])
 
-    # 화면 그리기
-    screen.fill((8, 100, 28))  # 당구대 초록색
+    # ===== 화면 그리기 =====
+    # 1) 바깥 배경
+    screen.fill(BACKGROUND_COLOR)
 
-    # 쿠션 경계
-    pygame.draw.rect(screen, (50, 30, 10), TABLE_RECT, 20)
+    # 2) 쿠션(연한 갈색) 전체를 먼저 채우기
+    pygame.draw.rect(
+        screen,
+        CUSHION_COLOR,
+        pygame.Rect(*CUSHION_RECT),
+    )
 
-    # 공 렌더링
+    # 3) 그 안쪽에 초록 천을 다시 채우기
+    pygame.draw.rect(
+        screen,
+        CLOTH_COLOR,
+        pygame.Rect(*TABLE_RECT),
+    )
+
+    # 4) 공 렌더링
     for b in balls:
         pygame.draw.circle(screen, b.color, (int(b.x), int(b.y)), b.radius)
 
-    # 드래그 중 샷 표시선
+    # 5) 드래그 중 샷 표시선
     if shooting and start_pos:
-        pygame.draw.line(screen, (255, 255, 255), start_pos,
-                         pygame.mouse.get_pos(), 2)
+        pygame.draw.line(
+            screen,
+            AIM_LINE_COLOR,
+            start_pos,
+            pygame.mouse.get_pos(),
+            2,
+        )
 
     pygame.display.flip()
 
